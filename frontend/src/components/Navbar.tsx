@@ -14,6 +14,8 @@ export default function Navbar({ onScrollToClassifier }: NavbarProps) {
     return () => window.removeEventListener('scroll', handleScroll)
   }, [])
 
+  const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:8000'
+
   return (
     <nav
       ref={navRef}
@@ -45,7 +47,7 @@ export default function Navbar({ onScrollToClassifier }: NavbarProps) {
           {[
             { label: 'Architecture', href: '#architecture' },
             { label: 'Classifier', href: '#classifier' },
-            { label: 'API Docs', href: 'http://localhost:8000/docs', external: true },
+            { label: 'API Docs', href: `${API_BASE}/docs`, external: true },
           ].map((link) => (
             <a
               key={link.label}
