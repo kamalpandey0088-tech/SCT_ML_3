@@ -164,20 +164,11 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(CorrelationIDMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 
-origins_str = os.getenv(
-    "ALLOWED_ORIGINS", 
-    '["http://localhost:5173", "http://localhost:4173"]'
-)
-import json
-try:
-    allowed_origins = json.loads(origins_str)
-except Exception:
-    allowed_origins = ["http://localhost:5173"]
-
+# CORS Allowlist Setup - Allow all for deployment simplicity
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
