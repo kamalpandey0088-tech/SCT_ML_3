@@ -20,7 +20,12 @@ pydantic-settings==2.3.4       # BaseSettings — env-var driven config for main
 slowapi==0.1.9                 # Rate-limiting for FastAPI (Starlette-native)
 limits==3.13.0                 # Backend for slowapi
 python-magic==0.4.27           # Magic-number MIME validation (needs libmagic)
+sqlalchemy[asyncio]==2.0.31    # SQL Database ORM with AsyncIO support
+asyncpg==0.29.0                # PostgreSQL async driver
+alembic==1.13.2                # Database migrations
+prometheus-client==0.20.0      # Application telemetry metrics
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
 tqdm==4.66.4
 matplotlib==3.9.0              # Optional: confusion matrix plots during training
+
