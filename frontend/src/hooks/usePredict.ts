@@ -39,7 +39,7 @@ export function usePredict() {
       formData.append('file', file)
 
       const { data } = await axios.post<PredictionResponse>(
-        `${API_BASE}/predict`,
+        `${API_BASE}/api/v1/predict`,
         formData,
         {
           headers: { 'Content-Type': 'multipart/form-data' },
