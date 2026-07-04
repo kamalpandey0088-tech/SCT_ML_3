@@ -84,8 +84,8 @@ def _init_models() -> None:
         dog_proto = class_weights[dog_indices].mean(axis=0)
         
         np.random.seed(42)
-        cat_features = cat_proto + np.random.normal(0, 0.15, size=(1000, 1280))
-        dog_features = dog_proto + np.random.normal(0, 0.15, size=(1000, 1280))
+        cat_features = cat_proto + np.random.normal(0, 0.001, size=(1000, 1280))
+        dog_features = dog_proto + np.random.normal(0, 0.001, size=(1000, 1280))
         
         X = np.vstack([cat_features, dog_features])
         y = np.array([0] * 1000 + [1] * 1000)
