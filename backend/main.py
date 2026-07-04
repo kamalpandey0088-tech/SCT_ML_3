@@ -90,7 +90,7 @@ def _init_models() -> None:
         X = np.vstack([cat_features, dog_features])
         y = np.array([0] * 1000 + [1] * 1000)
         
-        scaler = StandardScaler()
+        scaler = StandardScaler(with_mean=False, with_std=False)
         X_scaled = scaler.fit_transform(X)
         
         pca = PCA(n_components=30, random_state=42)
