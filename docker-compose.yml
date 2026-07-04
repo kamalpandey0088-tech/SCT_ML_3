@@ -1,0 +1,125 @@
+version: '3.9'
+
+services:
+  # ── PostgreSQL Database ────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: neuralpaw_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: neuralpaw
+      POSTGRES_PASSWORD: neuralpaw
+      POSTGRES_DB: neuralpaw
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U neuralpaw"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis (rate-limit store for multi-instance deployments) ───────────────
+  redis:
+    image: redis:7-alpine
+    container_name: neuralpaw_redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ── FastAPI Backend ────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: neuralpaw_api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://neuralpaw:neuralpaw@db:5432/neuralpaw
+      REDIS_URL: redis://redis:6379/0
+      RATE_LIMIT: 5/minute
+      MAX_UPLOAD_BYTES: 10485760
+      DEVICE: cpu
+      MODELS_DIR: /app/models
+      ALLOWED_ORIGINS: '["http://localhost:5173","http://localhost:80","https://neuralpaw.example.com"]'
+    volumes:
+      - ./models:/app/models:ro   # Mount trained .pkl files (read-only)
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ── Frontend Build + Nginx ─────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.frontend
+    container_name: neuralpaw_frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      api:
+        condition: service_healthy
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro    # Mount SSL certs for production
+
+  # ── Prometheus Metrics (optional monitoring) ───────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: neuralpaw_prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    profiles:
+      - monitoring
+
+  # ── Grafana Dashboard (optional) ──────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: neuralpaw_grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: neuralpaw_admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    profiles:
+      - monitoring
+
+volumes:
+  postgres_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  default:
+    name: neuralpaw_network

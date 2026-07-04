@@ -1,0 +1,17 @@
+{
+  "name": "NeuralPaw — AI Cat & Dog Classifier",
+  "short_name": "NeuralPaw",
+  "description": "Deep feature extraction via frozen MobileNetV2, PCA dimensionality reduction, and probabilistic classification via a radial-basis SVM.",
+  "theme_color": "#0a0a0a",
+  "background_color": "#0a0a0a",
+  "display": "standalone",
+  "orientation": "portrait",
+  "start_url": "/",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐾</text></svg>",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml"
+    }
+  ]
+}

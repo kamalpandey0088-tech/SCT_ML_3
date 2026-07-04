@@ -1,0 +1,26 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Cat vs Dog SVM Classifier — Python Dependencies
+# Pinned to latest stable releases as of 2026-Q2.
+# Install: pip install -r requirements.txt
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── ML & Scientific Stack ────────────────────────────────────────────────────
+torch==2.3.1
+torchvision==0.18.1
+scikit-learn==1.5.0
+numpy==1.26.4
+Pillow==10.4.0
+
+# ── FastAPI Backend (Phase 2) ────────────────────────────────────────────────
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+python-multipart==0.0.9        # Required for FastAPI file uploads
+pydantic==2.7.3
+pydantic-settings==2.3.4       # BaseSettings — env-var driven config for main.py
+slowapi==0.1.9                 # Rate-limiting for FastAPI (Starlette-native)
+limits==3.13.0                 # Backend for slowapi
+python-magic==0.4.27           # Magic-number MIME validation (needs libmagic)
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+tqdm==4.66.4
+matplotlib==3.9.0              # Optional: confusion matrix plots during training
