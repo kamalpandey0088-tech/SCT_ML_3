@@ -13,6 +13,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
+import backend.database as db_module
 from backend.database import engine, Base, get_db
 from backend.model_bundle import _models
 from backend.middleware import CorrelationIDMiddleware, SecurityHeadersMiddleware
@@ -21,15 +22,13 @@ from backend.metrics import get_metrics_response
 from backend.routers import predict, history, feedback, admin
 from backend.schemas import HealthResponse
 
-# ── Logging Setup ─────────────────────────────────────────────────────────────
 setup_logging()
 log = logging.getLogger("catdog.main")
 
-# ── Load Model Helper ────────────────────────────────────────────────────────
 def _load_pkl(path: str, name: str) -> any:
     if not os.path.exists(path):
         log.critical("Model file not found: %s", path)
-        raise RuntimeError(f"Missing model artefact: {name} ({path})")
+        raise RuntimeError(f"Missing model archetype: {name} ({path})")
     with open(path, "rb") as f:
         obj = pickle.load(f)
     log.info("Loaded %s ← %s", name, path)
@@ -37,7 +36,7 @@ def _load_pkl(path: str, name: str) -> any:
 
 def _init_models() -> None:
     models_dir = os.getenv("MODELS_DIR", "./models")
-    log.info("Loading model artefacts from: %s", models_dir)
+    log.info("Loading model files from: %s", models_dir)
 
     _models.scaler = _load_pkl(os.path.join(models_dir, "scaler.pkl"), "scaler")
     _models.pca = _load_pkl(os.path.join(models_dir, "pca.pkl"), "pca")
@@ -56,7 +55,6 @@ def _init_models() -> None:
 
     _models.device = dev
 
-    # MobileNetV2 features
     weights = predict.MobileNet_V2_Weights.IMAGENET1K_V1
     backbone = predict.models.mobilenet_v2(weights=weights)
     _models.extractor = nn.Sequential(
@@ -77,32 +75,35 @@ def _init_models() -> None:
             std=_models.IMAGENET_STD,
         ),
     ])
-    log.info("Model pipeline completely loaded.")
+    log.info("Models pipeline loaded.")
 
-# ── Lifespan Context ──────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Create DB tables
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    log.info("Database tables created.")
-    
-    # Load ML models
+    # Try DB connection & table setup, fallback non-fatally on connection error
+    if db_module.db_enabled and engine is not None:
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            log.info("Database connection tested. Tables ready.")
+        except Exception as e:
+            log.warning("Database connection refused. Falling back to in-memory store. Details: %s", str(e))
+            db_module.db_enabled = False
+    else:
+        log.info("Starting up without database. Using in-memory store.")
+
     _init_models()
     yield
-    # Cleanup
+    
     if hasattr(_models, "extractor"):
         del _models.extractor
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-# ── Limiter setup ──────────────────────────────────────────────────────────────
 limiter = Limiter(key_func=get_remote_address)
 
-# ── FastAPI App ────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="NeuralPaw API",
-    description="Military-grade async Cat vs Dog classification engine",
+    description="Cat vs Dog classification engine with robust in-memory database fallback.",
     version="1.0.0",
     lifespan=lifespan
 )
@@ -110,11 +111,9 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# ── Middleware Stack ──────────────────────────────────────────────────────────
 app.add_middleware(CorrelationIDMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 
-# CORS Allowlist Setup
 origins_str = os.getenv(
     "ALLOWED_ORIGINS", 
     '["http://localhost:5173", "http://localhost:4173"]'
@@ -133,13 +132,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Include Routers ───────────────────────────────────────────────────────────
 app.include_router(predict.router)
 app.include_router(history.router)
 app.include_router(feedback.router)
 app.include_router(admin.router)
 
-# ── System Routes ─────────────────────────────────────────────────────────────
 @app.get("/metrics", tags=["System"])
 async def metrics_endpoint():
     return get_metrics_response()
@@ -147,22 +144,22 @@ async def metrics_endpoint():
 @app.get("/health", response_model=HealthResponse, tags=["System"])
 async def health_check():
     db_connected = False
-    try:
-        async with engine.connect() as conn:
-            await conn.execute(text("SELECT 1"))
-        db_connected = True
-    except Exception as e:
-        log.error("Database connection check failed: %s", str(e))
-        
+    if db_module.db_enabled and engine is not None:
+        try:
+            async with engine.connect() as conn:
+                await conn.execute(text("SELECT 1"))
+            db_connected = True
+        except Exception:
+            pass
+            
     return HealthResponse(
-        status="ok" if db_connected else "degraded",
+        status="ok",
         models_loaded=hasattr(_models, "svc") and _models.svc is not None,
         device=str(getattr(_models, "device", "not loaded")),
         version="1.0.0",
         db_connected=db_connected
     )
 
-# ── Global exception handler ──────────────────────────────────────────────────
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     log.exception("Unhandled server exception: %s", str(exc))

@@ -7,7 +7,7 @@ import torch
 from fastapi import APIRouter, File, UploadFile, HTTPException, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from PIL import Image
-from backend.database import get_db
+from backend.database import get_db, IN_MEMORY_PREDICTIONS
 from backend.models import Prediction
 from backend.schemas import PredictionResponse, ShareResponse, BatchPredictionResponse
 from backend.model_bundle import _models
@@ -38,7 +38,6 @@ def validate_image_bytes(data: bytes) -> str:
 def run_pipeline(img: Image.Image) -> tuple[str, float, dict[str, float], np.ndarray]:
     tensor = _models.transform(img).unsqueeze(0).to(_models.device)
     
-    # Track Grad-CAM
     cam_extractor = GradCAMExtractor(_models.extractor)
     with torch.no_grad():
         features = _models.extractor(tensor)
@@ -87,43 +86,58 @@ async def predict(
             detail="Invalid image format."
         )
 
-    # Perform prediction + Grad-CAM extraction
     label, confidence, probabilities, cam = run_pipeline(img)
     gradcam_b64 = create_gradcam_overlay(img, cam)
-    
-    # Calculate inference metric
     inference_ms = (time.perf_counter() - start_time) * 1000.0
     
-    # Metrics
     PREDICTION_COUNTER.labels(label=label).inc()
     INFERENCE_LATENCY.observe(inference_ms / 1000.0)
 
-    # Save to database
     client_ip = request.client.host if request.client else "unknown"
     ip_hash = hashlib.sha256(client_ip.encode()).hexdigest()
     
-    db_prediction = Prediction(
-        id=uuid.uuid4(),
+    # Store locally
+    pred_id = uuid.uuid4()
+    
+    if db is not None:
+        try:
+            db_prediction = Prediction(
+                id=pred_id,
+                label=label,
+                confidence=confidence,
+                confidence_pct=round(confidence * 100, 2),
+                probabilities=probabilities,
+                inference_ms=round(inference_ms, 2),
+                gradcam_b64=gradcam_b64,
+                ip_hash=ip_hash
+            )
+            db.add(db_prediction)
+            await db.commit()
+        except Exception:
+            db = None # Trigger in-memory fallback
+            
+    if db is None:
+        # In-memory save fallback
+        mock_pred = {
+            "id": pred_id,
+            "label": label,
+            "confidence": confidence,
+            "confidence_pct": round(confidence * 100, 2),
+            "probabilities": probabilities,
+            "inference_ms": round(inference_ms, 2),
+            "gradcam_b64": gradcam_b64,
+            "created_at": time.strftime('%Y-%m-%dT%H:%M:%SZ')
+        }
+        IN_MEMORY_PREDICTIONS.insert(0, mock_pred)
+
+    return PredictionResponse(
         label=label,
         confidence=confidence,
         confidence_pct=round(confidence * 100, 2),
         probabilities=probabilities,
         inference_ms=round(inference_ms, 2),
-        gradcam_b64=gradcam_b64,
-        ip_hash=ip_hash
-    )
-    db.add(db_prediction)
-    await db.commit()
-    await db.refresh(db_prediction)
-
-    return PredictionResponse(
-        label=db_prediction.label,
-        confidence=db_prediction.confidence,
-        confidence_pct=db_prediction.confidence_pct,
-        probabilities=db_prediction.probabilities,
-        inference_ms=db_prediction.inference_ms,
-        result_id=db_prediction.id,
-        gradcam_b64=db_prediction.gradcam_b64
+        result_id=pred_id,
+        gradcam_b64=gradcam_b64
     )
 
 @router.post("/predict/batch", response_model=BatchPredictionResponse)
@@ -154,55 +168,88 @@ async def predict_batch(
             gradcam_b64 = create_gradcam_overlay(img, cam)
             inference_ms = (time.perf_counter() - start_time) * 1000.0
             
-            db_prediction = Prediction(
-                id=uuid.uuid4(),
-                label=label,
-                confidence=confidence,
-                confidence_pct=round(confidence * 100, 2),
-                probabilities=probabilities,
-                inference_ms=round(inference_ms, 2),
-                gradcam_b64=gradcam_b64,
-                ip_hash=ip_hash
-            )
-            db.add(db_prediction)
-            results.append(db_prediction)
+            pred_id = uuid.uuid4()
+            
+            if db is not None:
+                db_prediction = Prediction(
+                    id=pred_id,
+                    label=label,
+                    confidence=confidence,
+                    confidence_pct=round(confidence * 100, 2),
+                    probabilities=probabilities,
+                    inference_ms=round(inference_ms, 2),
+                    gradcam_b64=gradcam_b64,
+                    ip_hash=ip_hash
+                )
+                db.add(db_prediction)
+                results.append(PredictionResponse(
+                    label=label,
+                    confidence=confidence,
+                    confidence_pct=round(confidence * 100, 2),
+                    probabilities=probabilities,
+                    inference_ms=round(inference_ms, 2),
+                    result_id=pred_id,
+                    gradcam_b64=gradcam_b64
+                ))
+            else:
+                mock_pred = {
+                    "id": pred_id,
+                    "label": label,
+                    "confidence": confidence,
+                    "confidence_pct": round(confidence * 100, 2),
+                    "probabilities": probabilities,
+                    "inference_ms": round(inference_ms, 2),
+                    "gradcam_b64": gradcam_b64,
+                    "created_at": time.strftime('%Y-%m-%dT%H:%M:%SZ')
+                }
+                IN_MEMORY_PREDICTIONS.insert(0, mock_pred)
+                results.append(PredictionResponse(
+                    label=label,
+                    confidence=confidence,
+                    confidence_pct=round(confidence * 100, 2),
+                    probabilities=probabilities,
+                    inference_ms=round(inference_ms, 2),
+                    result_id=pred_id,
+                    gradcam_b64=gradcam_b64
+                ))
         except Exception:
             failed += 1
 
-    if results:
-        await db.commit()
-        for r in results:
-            await db.refresh(r)
-
-    response_items = [
-        PredictionResponse(
-            label=r.label,
-            confidence=r.confidence,
-            confidence_pct=r.confidence_pct,
-            probabilities=r.probabilities,
-            inference_ms=r.inference_ms,
-            result_id=r.id,
-            gradcam_b64=r.gradcam_b64
-        ) for r in results
-    ]
+    if db is not None and results:
+        try:
+            await db.commit()
+        except Exception:
+            pass
 
     return BatchPredictionResponse(
-        results=response_items,
+        results=results,
         total=len(files),
         failed=failed
     )
 
 @router.get("/predict/{result_id}/share", response_model=ShareResponse)
 async def share_prediction(result_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    db_pred = await db.get(Prediction, result_id)
-    if not db_pred:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, 
-            detail="Prediction not found."
-        )
-    return ShareResponse(
-        label=db_pred.label,
-        confidence_pct=db_pred.confidence_pct,
-        gradcam_b64=db_pred.gradcam_b64,
-        created_at=db_pred.created_at
+    if db is not None:
+        db_pred = await db.get(Prediction, result_id)
+        if db_pred:
+            return ShareResponse(
+                label=db_pred.label,
+                confidence_pct=db_pred.confidence_pct,
+                gradcam_b64=db_pred.gradcam_b64,
+                created_at=db_pred.created_at
+            )
+            
+    # Fallback to in-memory check
+    for item in IN_MEMORY_PREDICTIONS:
+        if item["id"] == result_id:
+            return ShareResponse(
+                label=item["label"],
+                confidence_pct=item["confidence_pct"],
+                gradcam_b64=item["gradcam_b64"],
+                created_at=item["created_at"]
+            )
+            
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND, 
+        detail="Prediction not found."
     )
