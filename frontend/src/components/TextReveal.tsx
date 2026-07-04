@@ -1,6 +1,5 @@
 import { useRef, useLayoutEffect } from 'react'
 import { gsap } from 'gsap'
-import { ScrollTrigger } from 'gsap/ScrollTrigger'
 
 interface TextRevealProps {
   /** The full text string to split into individually-animated words */
