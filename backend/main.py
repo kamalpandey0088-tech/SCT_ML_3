@@ -5,6 +5,8 @@ import pickle
 from contextlib import asynccontextmanager
 import torch
 import torch.nn as nn
+from torchvision import models, transforms
+from torchvision.models import MobileNet_V2_Weights
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -55,8 +57,8 @@ def _init_models() -> None:
 
     _models.device = dev
 
-    weights = predict.MobileNet_V2_Weights.IMAGENET1K_V1
-    backbone = predict.models.mobilenet_v2(weights=weights)
+    weights = MobileNet_V2_Weights.IMAGENET1K_V1
+    backbone = models.mobilenet_v2(weights=weights)
     _models.extractor = nn.Sequential(
         backbone.features,
         nn.AdaptiveAvgPool2d((1, 1)),
@@ -67,10 +69,10 @@ def _init_models() -> None:
     _models.extractor.eval()
     _models.extractor.to(dev)
 
-    _models.transform = predict.transforms.Compose([
-        predict.transforms.Resize((_models.IMG_SIZE, _models.IMG_SIZE)),
-        predict.transforms.ToTensor(),
-        predict.transforms.Normalize(
+    _models.transform = transforms.Compose([
+        transforms.Resize((_models.IMG_SIZE, _models.IMG_SIZE)),
+        transforms.ToTensor(),
+        transforms.Normalize(
             mean=_models.IMAGENET_MEAN,
             std=_models.IMAGENET_STD,
         ),
