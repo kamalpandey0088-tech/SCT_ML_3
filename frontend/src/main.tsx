@@ -6,7 +6,7 @@ import { useGSAP } from '@gsap/react'
 import './index.css'
 import App from './App'
 
-gsap.registerPlugin(ScrollTrigger, useGSAP)
+gsap.registerPlugin(ScrollTrigger)
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
