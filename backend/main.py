@@ -1,6 +1,9 @@
 import logging
 import sys
 import os
+# Secure PyTorch Hub cache path for non-root system users
+os.environ["TORCH_HOME"] = os.path.join(os.getcwd(), ".cache")
+
 import pickle
 from contextlib import asynccontextmanager
 import torch
